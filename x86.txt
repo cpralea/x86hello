@@ -1,0 +1,491 @@
+x86 multitasking and protection features
+
+
+
+What is x86?
+
+    x86 is a family of 16/32/64-bit CPUs originally developed by Intel.
+    It was initially released in 1978 and is still under active development today, more than 4 decades later. All CPUs in this family are fully backward compatible with their predecessors.
+
+    Examples:
+        16-bit:         8086                  (1978)
+        32-bit:         80386                 (1985)
+        64-bit:         any         (since ca. 2004)
+
+    We'll be focusing on 32-bit operation and also occasionally touch upon 16-bit as well.
+
+
+
+Why is it important?
+
+    Almost all desktops and laptops in existence today rely on it.
+    Only recently we're starting to see the emergence or ARM-based devices in this space traditionally occupied by x86.
+
+    Nevertheless, the principles behind x86 multitasking and protection features are more or less universal and therefore worth understanding.
+
+    The modern-day operating systems all rely on CPU hardware features to isolate and schedule processes.
+
+
+
+How does an x86 operate?
+
+    Upon power on, all x86s begin operation under a so called "Real Mode" of execution.
+
+    In Real Mode the CPU for the most part behaves like a very fast 8086. Operands are 16-bit, addressable physical memory is limited to 1MB. Memory address is segmented (more on that later) and there is no hardware support for memory protection, privilege levels and multitasking.
+
+    After some required software initialization is performed while running in Real Mode, processors like 80386 and above can be switched to a mode of execution called "Protected Mode".
+
+    In Protected Mode, up to 4GB or physical memory can be accessed, memory access rules are enforced, the hardware understands the notion of "tasks" and "privilege levels", support for hardware task switching is available and the ability to execute instructions is restricted based on privilege levels. These hardware-based mechanisms are leveraged by the OSes and are central to their ability to isolate and schedule processes.
+
+
+
+What kind of initialization is needed for a switch to Protected Mode?
+
+    At a minimum, there are three kinds of data structures to be defined:
+        1. a Global Descriptor Table
+        2. an Interrupt Descriptor Table
+        3. a Task State Segment (part of the GDT)
+
+    Optionally, the following can also be defined:
+        a. more Task State Segments
+        b. Local Descriptor Tables
+        c. Page Directories, Page Tables, Pages (part of the page mappings)
+        d. Task Gates, Trap Gates, etc.
+    
+    All these data structures reside in memory and the hardware (the CPU) makes heavy use of them.
+
+
+
+What do we want to achieve?
+
+    We want to create a "Hello, world!" type of application where:
+        - No OS is used
+        - The CPU is in Protected Mode
+        - "Hello" and "World" are displayed independently by two "processes" via a "OS system call"
+        - the "OS" does preemptive scheduling of the two "processes" via software (not hardware) task switching (like all modern OSes do)
+    Furthermore:
+        - The system is very small
+        - C/assembler are used to implement it
+        - No external libraries are used
+
+    Basically, "Hello, world!" on bare metal, with an OS-like twist.
+
+
+
+What do we need to know before we begin?
+
+    - How x86 looks like from a programming perspective
+    - How a complete system (a typical PC) is put together
+    - How the boot process works
+    - What are CPU interrupts and how do they work
+    - The basics of VGA text buffer, Real-Time Clock and Programable Interrupt Controller
+
+
+
+What tools we'll be using?
+
+    - A virtual computer (QEMU, VirtualBox)
+    - A C compiler (smlrc)
+    - An assembler (nasm)
+    - Some BIOS services (int 0x13)
+
+
+
+How does x86 look like from a programming perspective?
+
+    A number of registers are available, as follows (16/32-bit only, 64-bit out of scope):
+        - general purpose registers
+            16-bit: AX, BX, CX, DX
+                    the lower/upper half of each being accessible as xL and xH
+            32-bit: EAX, EBX, ECX, EDX
+                    in each case, xX representing the lower half of ExX
+        - segment registers
+                    CS (code), SS (stack), DS, ES, FS, GS (all of them, data)
+        - other
+                    (E)IP instruction pointer
+                    (E)SP stack pointer
+                    (E)BP base pointer, usually used in conjunction with (E)SP
+                    (E)FLAGS various flags (are interrupts enabled?, was the result of the last operation 0?, and so on)
+                    (E)SI, (E)DI source/destination index
+        - control registers (32/64-bit only, not available in 16-bit mode)
+                    CR0, CR1, CR2, CR3, CR4
+                    GDTR, IDTR, TR
+                    etc.
+
+    Instructions and data are accessed using a combination of segment register and other registers. For instance, instructions are always fetched from CS:(E)IP, the top of the stack is found at SS:(E)SP, data access is performed at (E){D,E,F,G}S:(E)xX.
+
+    In other words, x86 uses segmented memory access.
+
+
+
+How does memory segmentation work?
+
+    In Real Mode:
+        address = segment * 16 + pointer
+
+        for example: 0x1000:0x1000 == 0x11000
+
+    In Protected Mode:
+        The segment register points to a Segment Descriptor (8 bytes) which contains (among other things) a segment base and a segment limit.
+
+        address = segment base + pointer, and
+        pointer < limit, always
+
+        for example: 0x8:0x1000 == 2ndGDTseg.base_address + 0x1000, while
+                     checks are performed to ensure 0x1000 < 2ndGDTseg.limit
+
+
+
+How does a typical PC look like (simplified)?
+
+                        ----------------                --------
+                        |              |                |      |
+                    int |              | addr/data      |      |
+           -------------|     CPU      |----------------| MEM  |
+           |            |              |           |    |      |
+           |            |              |           |    |      |
+           |            ----------------           |    --------
+        --------               | i/o ports         |
+        | PIC  |---------------|                   |    --------
+        --------               |                   |----| VGA  |
+           |                   |                   |    --------
+    ----------------           |                   |
+    |     RTC      |-----------|                   |    --------
+    -------|--------           |                   |----| BIOS |
+    -------|--------           |                        --------
+    |   Keyboard   |-----------|
+    -------|--------           |
+    -------|--------           |
+    |   Storage    |-----------|
+    ----------------
+
+    Real Mode address space (the first 1MB):
+            start       size                description
+            0x00000000  1 KB                Interrupt Vector Table
+            0x00000400  256 bytes           BIOS data area
+    --->    0x00000500  almost 30 KB        conventional memory
+    --->    0x00007C00  512 bytes           OS boot sector
+    --->    0x00007E00  480.5 KB            conventional memory
+            0x00080000  128 KB              extended BIOS data area
+    --->    0x000A0000  128 KB              video display memory
+            0x000C0000  32 KB (typically)   video BIOS
+            0x000C8000  160 KB (typically)  BIOS expansions
+            0x000F0000	64 KB               BIOS
+
+
+
+How does our virtual PC look like?
+
+    Like above.
+    BIOS, 4MB RAM, VGA video, PIC, RTC, Keyboard, Storage
+
+
+
+How does the boot process work?
+
+    The machine is powered up, the CPU begins execution in Real Mode with the CS:EIP register pair initialized to 0xF000:0xFFF0 which means execution starts at address 0xFFFF0 (basically somewhere inside the BIOS area).
+
+    The BIOS determines the boot drive and loads the first sector (the Master Boot Record, 512 bytes) into memory at address 0x7C00.
+
+    After that, control is transferred to the boot loader (by BIOS executing something like a JMP 0x0:0x7C00).
+
+
+
+What will our boot loader do?
+
+    Our particular boot loader implementation will do the following:
+        1. Disable interrupts
+        2. Load the 16-bit part of the OS (up to 1KB) at address 0x0500.
+        3. Load the 32-bit part of the OS (up to 16KB) at address 0x1000.
+        4. Load the two "hello" and "world" processes (up to 4K each) at address 0x5000.
+           (we do this to emulate a form of "storage" and thus avoid to implement HDD/FS drivers)
+
+
+
+How do interrupts work and why initially disable them?
+
+    Interrupts are events that can either be generated externally (via either one of INTR and NMI CPU pins) or internally by executing the INT CPU instruction. Each interrupt has an associated 1 byte interrupt number.
+
+    Regardless of source, the normal flow of program execution is interrupted and control is transferred to a handler routine identified based on the interrupt number.
+
+    In Real Mode there is an Interrupt Vector Table which contains pointers to the handler routines. In Protected Mode there is an Interrupt Descriptor table which contains Interrupt Gates, Task Gates and Trap Gates. Each gate contains, among other things, a means to identify the address of the interrupt handling routine to be called.
+
+    Before invoking the handler, the CPU pushes on stack the return address, flags, etc. Return from handler is done by executing an IRET instruction which will take care to restore from stack the CPU state prior to the interruption.
+
+    The boot loader disables interrupts as not to have to handle spurious events such as a clock tick (from RTC) or a key press (from the Keyboard).
+
+
+
+What minimal initialization has to be performed in Real Mode before entering Protected Mode?
+
+    There are two memory protection mechanisms available in Protected mode:
+        1. Segmentation (mandatory)
+        2. Pagination (optional, out of scope)
+
+    Therefore, at the very least, we must define some segments before entering Protected Mode.
+
+
+
+How does a segment look like?
+
+    A segment is a contiguous memory region starting at "base address" and extending either up or down to "base address" +/- "limit".
+
+    A segment also has other properties, such as:
+        - type (is it a code segment? is it a data segment?)
+        - access type (read, write, executable)
+        - Descriptor Privilege Level
+
+    All this information is specified in an 8 byte segment descriptor.
+
+
+
+What minimal set of segments we must define? And where?
+
+    Preparations for entering Protected Mode include defining a minimum of 3 segments inside the GDT:
+        0x0:    Reserved by the CPU, to be initialized with 0
+        0x8:    A code segment
+        0x10:   A data/stack segment
+    
+    These are placed on the first 3 positions in the GDT and then the GDTR register is loaded via the LGDT instruction with the address and size (4 + 2 bytes in total) of the GDT.
+
+    The GDT can hold up to 2^12 entries.
+
+
+
+How are GDT entries identified?
+
+    Segment descriptors (either in GDT or LDT) are identified via 2 bytes segment selectors held inside segment registers.
+
+    A segment selector looks like this:
+        index into the GDT/LDT (0 - 2^12-1) * 8 +
+            GDT (0) / LDT (1) selection bit * 4
+              Requested Privilege Level (0 - 3)
+
+    For example, selector 0x8 above refers to the second segment descriptor in the GDT with a RPL of 0.
+
+
+
+What is the relationship between DPL, RPL and CPL?
+
+    When code attempts to access a segment, the DPL of the segment is compared to the CPL (Current Privilege Level) of the code being executed and the RPL of the segment selector.
+
+    Given the nature of our particular example and the way we define and access segments, only one of the rules governing this check is of particular interest to us: DPL and CPL must match exactly. However, more complex access scenarios are possible.
+
+
+
+How to enter Protected Mode?
+
+    The procedure is well defined in the Intel "System Programming Guide" manual:
+        1. Disable interrupts
+        2. Execute LGDT
+        3. Set the PE flag in CR0
+        4. Execute a far JMP to the first instruction to be executed in Protected Mode
+
+
+
+What further initialization is performed upon entering Protected Mode?
+
+        5. Set SS and DS to point to 0x10 (CS already points to 0x8 by virtue of the far JMP)
+        6. Remap PIC
+        7. Setup IDT
+        8. Setup TSS
+        9. Load user space processes
+       10. Initialize OS scheduler
+       11. Enable Interrupts
+
+
+
+What does it mean to remap the PIC and why do it?
+
+    Peripherals such as the RTC (critical for what we do here) and the keyboard (just a nice to have in our example) are both connected to the PIC. The reason for this is that both can generate interrupts and there is but one INTR pin exposed by the CPU.
+
+    All peripherals that can generate interrupts must be multiplexed onto the single CPU pin dedicated to this purpose. The function of multiplexing is handled by the PIC.
+
+    Remapping the PIC means that we decide which specific interrupt will each peripheral generate. In our example, RTC is (re)mapped (via the PIC) to int 0x20 and the keyboard is (re)mapped to int 0x21. Also, our example turns off all other interrupts.
+
+    The reason for the remapping is to make sure that no peripheral interrupt overlaps with the first 32 interrupts which are reserved by the CPU for its purposes.
+
+
+
+How the IDT is setup?
+
+    The IDT is populated with 129 Interrupt Gate entries to handle:
+        - the first 32 reserved interrupts (default behavior: print a message and halt the system as we do no error handling here)
+        - the RTC interrupt (used by the scheduler)
+        - the keyboard interrupt (not really needed, it's there just for experimentation purposes)
+        - int 0x80 (OS entry point for system calls)
+    
+    Interrupt Gates have been chosen because they have the nice property of disabling interrupts upon entering the handler and reenabling them upon return. For the sake of simplicity and given the lack of performance constraints we prefer the OS not to be preempted (by the RTC for example).
+
+    Each interrupt gate contains:
+        a. a segment selector
+        b. an offset into the segment to where the handler routine resides
+        c. DPL
+    
+    After the IDT has been (partially) populated, register IDTR is loaded with information about its location and size via the LDTR instruction (similar to how GDT/GDTR is handled).
+
+
+
+If software task switching is to be used, why bother setting up a TSS?
+
+    Because there is no other way for the CPU to transition between rings upon receiving an interrupt (from ring 3 to ring 0 in our case). Transition between rings upon returning from an interrupt handler is not an issue and is achieved without it.
+
+    Basically all software running on the CPU executes in the context of a single hardware task. No hardware task switching ever takes place. The associated TSS only serves as a placeholder for a small but important piece of information needed during an inter-ring transition initiated upon receiving an interrupt.
+
+
+
+What are these CPU "rings" anyway?
+
+    x86 offers 4 rings: ring 0 (most privileged) to ring 3 (least privileged). The higher the ring number (meaning the current CPL), the more and more restricted the execution environment becomes. For example, instructions such as LGDT, LIDT and HLT can only be executed at ring 0.
+
+    Traditionally, the OS executes at ring 0 and all user space processes execute at ring 3. There are however OSes that make use of the other two rings as well for parts of the OS code.
+
+
+
+What's wrong with hardware task switching?
+
+    Nothing, really.
+
+    It's just that:
+        a. It is deemed inefficient (lots of data saved although not necessarily needed; lots of data not saved, although it might be needed)
+        b. Less portable (from an OS implementer perspective)
+        c. No "modern" OS is using it (ca. 2000 era in the days of 32-bit OSes)
+        d. in 64-bit mode is not even available
+
+
+
+How the TSS is setup?
+
+    TSS is zeroed-out, except for the SS0 and ESP0 slots which are populated with OS (ring 0) stack segment and corresponding initial stack pointer.
+    
+    For simplicity reasons, the TSS I/O map base address is set so that no I/O is possible, which is OK in our case.
+
+    The 4th segment descriptor slot in the GDT is configured with a TSS Descriptor to point to the TSS. The TR register is loaded with the corresponding segment selector via the LTR instruction, taking care that the selector specifies RPL 3 so that the data is accessible from ring 3.
+
+
+
+How does software task switching work?
+
+    This part is key in understanding how our example works.
+
+    Task switching is triggered by either:
+        a. external interrupt
+            i. RTC                  (int 0x20)
+           ii. keyboard             (int 0x21)
+          iii. any other
+        b. internal
+            i. OS syscall           (int 0x80)
+    
+    There are 3 possible transitions in our example:
+        1. ring 3 to ring 0 (user space to kernel space)
+           ex: user space process gets interrupted via RTC tick, execution is transferred to kernel space
+        2. ring 0 to ring 3 (kernel space to user space)
+           ex: task switching was performed by the scheduler (in kernel space) and we are now resuming process execution (in user space)
+        3. ring 0 to ring 0 (kernel space to kernel space)
+           ex: while executing a kernel space task (more on that later), execution was interrupted via a RTC tick and control was transferred to the corresponding interrupt handler (also in kernel space)
+    
+    In order for a transition to occur, the following series of events takes place:
+        1. interrupt is received (either internal or external)
+        2. execution is suspended
+        3. the CPU determines the stack segment to use:
+            - ring 3 to ring 0: new SS and ESP values are retrieved from the TSS
+            - ring 0 to ring 0: old SS and ESP are kept
+        4. the CPU saves the following to the stack (all values represent the CPU state prior to receiving the interrupt):
+            - ring 3 to ring 0: SS, ESP, EFLAGS, CS, EIP
+            - ring 0 to ring 0:          EFLAGS, CS, EIP
+        5. the interrupt handler is executed
+        6. the CPU restores from the stack the saved state EIP, CS, EFLAGS
+        7. if CS indicates (via RPL) a transition to a different privilege level (go back t0 ring 3 from ring 0), the CPU further restores from stack ESP, SS
+        8. execution is resumed
+
+
+
+What does loading user space processes mean in our particular context?
+
+    We are not implementing an OS here. Therefore there are no HDD and File System drivers. The processes we intend to execute were loaded into memory by the boot loader at 0x5000 and there is a fixed upper bound on their size.
+    
+    Therefore, all we need to do is:
+        1. Copy them from "storage" (OS memory area in our case) to their respective memory addresses (outside of OS memory space) from which they'll be executed (thus "loading" them in user memory)
+        2. Setup 2 memory segments per process and place them in GDT: one segment for code and one segment for data and stack (similar to the minimal setup we did for the OS)
+
+
+
+How does the scheduler work?
+
+    First, for each process in the system, the scheduler creates and initializes a process state holding area that contains values for:
+        a. DS, ES, FS, GS (the data segment registers)
+        b. SS, ESP, EFLAGS, CS, EIP
+        c. EAX, EBX, ECX, EDX, EBP, ESI, EDI (all general purpose registers)
+
+    Values for DS, ES, FS and GS are initialized with the proper segment selector for the process' data/stack segment in GDT. The RPL of the selector is set to 3.
+    Values for all other registers will be saved/restored at switch time from/to stack.
+
+    Then, the scheduler hooks into the task switching mechanism (activated upon receiving an RTC interrupt), as follows:
+
+        1. sets the CPU data segments to those specific to the OS
+        2. saves on stack the state of all general purpose CPU register, thus creating a snapshot of current (soon to be old) process execution
+
+            ESP + 48        SS         -|
+            ESP + 44        ESP         |
+                            EFLAGS      |-----  pushed by the CPU
+                            CS          |
+            ESP + 32        EIP        -|
+                            EAX        -|
+                            ECX         |
+                            EDX         |
+                            EBX         |
+                            ESP         |-----  pushed by us
+                            EBP         |
+                            ESI         |
+            ESP +  0        EDI        -|
+
+        3. copies the saved state of the old process from stack to its saved state holding area
+
+        4. selects another process for execution
+
+        5. copies new process saved state from the corresponding holding area to the stack
+        6. loads into the CPU data segments with the proper per process values from the same holding area
+        7. initiates a return from interrupt (by executing an IRET instruction)
+
+    In our implementation, a trivial round-robin scheduling algorithm is used.
+
+
+
+How does making system calls work?
+
+    System calls work by transferring control from user space to OS space via an interrupt.
+
+    The way this process works in our case is as follows:
+        1. Relevant parameters (syscall id plus any other, as needed) are pushed on user space stack
+        2. INT 0x80 is executed in user space to transfer control to the OS
+        3. The OS uses the SS:ESP information pushed by the CPU on the stack to identify and read the syscall parameters
+        4. Based on syscall id, the OS determines which function has been requested and passes any other parameters received as input to the corresponding handler routine
+
+    Our simple example implements 2 system calls:
+        a. display() to print text on screen
+        b. pause() to temporarily suspend execution until the next interrupt is received
+
+
+
+How does printing on the screen work?
+
+    The VGA text buffer is memory mapped at address 0xB8000.
+
+    Printing works by writing directly to the VGA text buffer. The buffer holds data for a 80x25 text area, each character being represented by 2 bytes, one for the character itself and one for color attributes.
+
+    To display some text on screen, one simply needs to write the right values (data and attributes) to the right location (line and column) inside the VGA text buffer memory area.
+
+    Because its location is (and should be) inside the OS address space, only the OS code can show anything on screen. For this reason, displaying text from user space requires a system call.
+
+
+
+How does pausing execution work?
+
+    Pausing execution works by halting the CPU via the HLT instruction. This instruction is privileged and can only be executed at ring 0.
+
+    Our setup is as follows:
+        - In addition to the user space processes (executing at ring 3), one OS space process is defined (executing at ring 0)
+        - The "idle" OS process simply executes HLT in a loop
+        - The idle process is scheduled and preempted just like any other process with no special consideration being payed to it beyond making sure it is defined to execute at ring 0
+    
+    When the pause() syscall is invoked, the current process is suspended and the idle process is scheduled for execution. Upon receiving the next RTC tick the idle process will be preempted (just like any other user space process would) and the next user space process is scheduled.

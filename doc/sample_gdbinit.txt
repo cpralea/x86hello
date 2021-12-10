@@ -1,0 +1,7 @@
+set startup-with-shell off
+set history save on
+set architecture i8086
+set disassembly-flavor intel
+target remote localhost:1234
+
+break *0x1bf0
