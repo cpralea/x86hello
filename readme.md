@@ -19,6 +19,16 @@ $ make
 $ make run
 ```
 
+Here is a sample output:
+
+```
+hello
+world
+hello
+world
+hello
+```
+
 
 # Other resources
 
