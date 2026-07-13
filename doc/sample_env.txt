@@ -1,5 +1,3 @@
-export HBM_QEMU_NCURSES=-curses
-export HBM_QEMU_MONITOR=
 export HBM_SMLRC_HOME=/opt/smlrc
 export VBOX_HOME=/mnt/c/Tools/VirtualBox
 export VBOX_IMG_UUID=1614c221-268d-4226-9c35-b82477e2ea63

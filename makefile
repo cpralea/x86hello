@@ -3,9 +3,9 @@
 
 all: mkbdirs images
 run: all
-	qemu-system-i386 -machine q35 -m 4M ${x86H_QEMU_NCURSES} ${x86H_QEMU_MONITOR} -drive file=hello.img,format=raw,index=0,if=ide,media=disk
+	qemu-system-i386 -machine q35 -m 4M -display curses -drive file=hello.img,format=raw,index=0,if=ide,media=disk
 debug: all
-	qemu-system-i386 -machine q35 -m 4M ${x86H_QEMU_NCURSES} ${x86H_QEMU_MONITOR} -drive file=hello.img,format=raw,index=0,if=ide,media=disk -s -S
+	qemu-system-i386 -machine q35 -m 4M -display curses -drive file=hello.img,format=raw,index=0,if=ide,media=disk -s -S
 images: hello.img hello.vdi
 mkbdirs:
 	@if [ ! -d .build ]; then \
