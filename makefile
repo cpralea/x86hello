@@ -6,7 +6,7 @@ run: all
 	qemu-system-i386 -machine q35 -m 4M -display curses -drive file=hello.img,format=raw,index=0,if=ide,media=disk
 debug: all
 	qemu-system-i386 -machine q35 -m 4M -display curses -drive file=hello.img,format=raw,index=0,if=ide,media=disk -s -S
-images: hello.img hello.vdi
+images: hello.img
 mkbdirs:
 	@if [ ! -d .build ]; then \
 		mkdir -p .build; \
