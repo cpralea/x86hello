@@ -36,7 +36,7 @@ void setup_tss_descr()
     struct SegmentDescriptor* GDT   = get_gdt();
 
     unsigned short base             = (unsigned int) &TSS;
-    unsigned short limit            = base + sizeof(TSS) - 1;
+    unsigned short limit            = sizeof(TSS) - 1;
 
     struct SegmentDescriptor* tss   = &GDT[3];
     tss->seg_lim_bits15to00         = limit;

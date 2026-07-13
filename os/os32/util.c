@@ -43,7 +43,7 @@ void memcpy(void* dst, void* src, unsigned short size)
 
 void memset(void* mem, unsigned char val, unsigned short size)
 {
-    for (unsigned short i; i < size; i++)
+    for (unsigned short i = 0; i < size; i++)
         ((char*) mem)[i] = val;
 }
 

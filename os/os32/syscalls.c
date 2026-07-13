@@ -60,7 +60,7 @@ void unknown()
     print("unknown syscall number");
 
     char numstr[11];
-    print(uint2hexstr(get_syscall_num(base_addr, stack_ptr),  numstr));
+    print(uint2hexstr(get_syscall_num(),  numstr));
 
     hlt();
 }
